@@ -94,6 +94,9 @@ function handleMessage(message) {
       state.controls = message.controls || [];
       renderControls();
       break;
+    case 'roi-update':
+      applyROIFromServer(message.roi);
+      break;
     case 'control-update':
       updateControlValue(message.name, message.value);
       break;
@@ -145,6 +148,55 @@ function throttleROISend() {
     sendROIUpdate();
     state.roiSendTimeout = null;
   }, 120);
+}
+
+function applyROIFromServer(roi) {
+  if (!roi) return;
+  let changed = false;
+
+  if (typeof roi.imageWidth === 'number' && roi.imageWidth > 0 && roi.imageWidth !== state.imageWidth) {
+    state.imageWidth = roi.imageWidth;
+    changed = true;
+  }
+
+  if (typeof roi.imageHeight === 'number' && roi.imageHeight > 0 && roi.imageHeight !== state.imageHeight) {
+    state.imageHeight = roi.imageHeight;
+    changed = true;
+  }
+
+  if (typeof roi.zoom === 'number') {
+    const normalizedZoom = Math.min(Math.max(roi.zoom, 1), 4);
+    if (state.zoom !== normalizedZoom) {
+      state.zoom = normalizedZoom;
+      changed = true;
+    }
+  }
+
+  if (typeof roi.x === 'number') {
+    const nextX = Math.max(0, roi.x);
+    if (state.offsetX !== nextX) {
+      state.offsetX = nextX;
+      changed = true;
+    }
+  }
+
+  if (typeof roi.y === 'number') {
+    const nextY = Math.max(0, roi.y);
+    if (state.offsetY !== nextY) {
+      state.offsetY = nextY;
+      changed = true;
+    }
+  }
+
+  clampOffset();
+
+  if (zoomSlider && Number(zoomSlider.value) !== state.zoom) {
+    zoomSlider.value = state.zoom;
+  }
+
+  if (changed) {
+    updateTransform();
+  }
 }
 
 function getCurrentROIPixels() {
@@ -341,7 +393,7 @@ function handleRecordToggle() {
   }
 }
 
-function updateRecordStatus(status) {
+function updateRecordStatus(status, file) {
   state.recordStatus = status;
   if (!recordBtn) return;
   if (status === 'recording') {
@@ -351,10 +403,13 @@ function updateRecordStatus(status) {
     recordBtn.classList.remove('recording');
     recordBtn.textContent = '⏺ Grabar';
   }
+  if (status === 'stopped' && file) {
+    showToast(`Grabación guardada: ${file}`);
+  }
 }
 
 function showToast(message) {
-  if (!message) return;
+  if (!message || !toastContainer) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
   toast.textContent = message;

@@ -32,6 +32,33 @@ let currentROI = {
   imageHeight: null
 };
 
+function normalizeROI(roi = {}) {
+  const next = { ...currentROI };
+  const numericKeys = ['zoom', 'x', 'y', 'width', 'height', 'imageWidth', 'imageHeight'];
+  numericKeys.forEach((key) => {
+    if (roi[key] === undefined || roi[key] === null) return;
+    const value = Number(roi[key]);
+    if (!Number.isNaN(value)) {
+      if (key === 'zoom') {
+        next.zoom = Math.min(Math.max(value, 1), 4);
+      } else if (key === 'width' || key === 'height' || key === 'imageWidth' || key === 'imageHeight') {
+        next[key] = Math.max(0, value);
+      } else {
+        next[key] = Math.max(0, value);
+      }
+    }
+  });
+
+  if (next.imageWidth && next.width) {
+    next.x = Math.min(Math.max(next.x, 0), Math.max(next.imageWidth - next.width, 0));
+  }
+  if (next.imageHeight && next.height) {
+    next.y = Math.min(Math.max(next.y, 0), Math.max(next.imageHeight - next.height, 0));
+  }
+
+  return next;
+}
+
 let recordingProcess = null;
 let recordingFile = null;
 
@@ -269,6 +296,7 @@ async function setControl(name, value) {
 wss.on('connection', (ws) => {
   send(ws, 'hello', { message: 'connected' });
   send(ws, 'record-status', { status: recordingProcess ? 'recording' : 'idle', file: recordingFile });
+  send(ws, 'roi-update', { roi: currentROI });
 
   ws.on('message', async (raw) => {
     let payload;
@@ -301,16 +329,19 @@ wss.on('connection', (ws) => {
         case 'record': {
           if (payload.action === 'start') {
             await startRecording(payload.roi || currentROI);
+            const relativeFile = recordingFile ? path.relative(__dirname, recordingFile) : null;
+            broadcast('record-status', { status: 'recording', file: relativeFile });
             send(ws, 'toast', { message: 'Grabación iniciada' });
           } else {
             const file = await stopRecording();
             send(ws, 'toast', { message: 'Grabación detenida' });
-            send(ws, 'record-status', { status: 'stopped', file: path.relative(__dirname, file) });
+            broadcast('record-status', { status: 'stopped', file: path.relative(__dirname, file) });
           }
           break;
         }
         case 'roi-update': {
-          currentROI = { ...currentROI, ...payload.roi };
+          currentROI = normalizeROI(payload.roi || {});
+          broadcast('roi-update', { roi: currentROI });
           break;
         }
         default:
