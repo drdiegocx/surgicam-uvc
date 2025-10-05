@@ -10,12 +10,7 @@
     <div id="app">
       <div id="viewer">
         <div id="image-wrapper">
-          <img
-            id="stream"
-            src="http://localhost:8080/?action=stream"
-            alt="SurgiCam Stream"
-            draggable="false"
-          />
+          <img id="stream" alt="SurgiCam Stream" draggable="false" />
         </div>
         <div id="overlay">
           <div id="dock">
@@ -29,7 +24,7 @@
         </div>
         <div id="roi-map" class="overlay-panel">
           <div class="map-frame">
-            <img src="http://localhost:8080/?action=stream" alt="ROI map" draggable="false" />
+            <img id="roi-map-image" alt="ROI map" draggable="false" />
             <div id="roi-viewport"></div>
           </div>
         </div>

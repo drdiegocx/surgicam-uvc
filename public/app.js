@@ -21,10 +21,27 @@ const snapshotBtn = document.getElementById('snapshot-btn');
 const recordBtn = document.getElementById('record-btn');
 const roiViewport = document.getElementById('roi-viewport');
 const roiMap = document.getElementById('roi-map');
+const roiMapImage = document.getElementById('roi-map-image');
 const controlsList = document.getElementById('controls-list');
 const toastContainer = document.getElementById('toast-container');
 const drawer = document.getElementById('control-drawer');
 const drawerToggle = document.getElementById('drawer-toggle');
+
+const STREAM_HOST = window.location.hostname || 'surgicam.local';
+const STREAM_URL = `http://${STREAM_HOST}:8080/?action=stream`;
+const WS_URL = (() => {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = window.location.host || 'surgicam.local:3000';
+  return `${protocol}://${host}`;
+})();
+
+if (stream) {
+  stream.src = STREAM_URL;
+}
+
+if (roiMapImage) {
+  roiMapImage.src = STREAM_URL;
+}
 
 const controlIcons = {
   brightness: '🌞',
@@ -47,7 +64,7 @@ const controlIcons = {
 };
 
 function connectSocket() {
-  const ws = new WebSocket('ws://surgicam.local:3000');
+  const ws = new WebSocket(WS_URL);
   state.ws = ws;
 
   ws.addEventListener('open', () => {
@@ -265,6 +282,7 @@ function handleROIMapInteraction(event) {
 }
 
 function bindROIMap() {
+  if (!roiMap) return;
   let active = false;
   const start = (event) => {
     active = true;
@@ -279,12 +297,30 @@ function bindROIMap() {
   };
   roiMap.addEventListener('pointerdown', (event) => {
     event.preventDefault();
-    roiMap.setPointerCapture(event.pointerId);
+    if (typeof roiMap.setPointerCapture === 'function') {
+      try {
+        roiMap.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // ignore pointer capture failures
+      }
+    }
     start(event);
   });
   roiMap.addEventListener('pointermove', move);
   roiMap.addEventListener('pointerup', (event) => {
-    roiMap.releasePointerCapture(event.pointerId);
+    if (typeof roiMap.releasePointerCapture === 'function') {
+      try {
+        if (typeof roiMap.hasPointerCapture === 'function') {
+          if (roiMap.hasPointerCapture(event.pointerId)) {
+            roiMap.releasePointerCapture(event.pointerId);
+          }
+        } else {
+          roiMap.releasePointerCapture(event.pointerId);
+        }
+      } catch (error) {
+        // ignore pointer capture failures
+      }
+    }
     stop();
   });
   roiMap.addEventListener('pointercancel', stop);
@@ -307,6 +343,7 @@ function handleRecordToggle() {
 
 function updateRecordStatus(status) {
   state.recordStatus = status;
+  if (!recordBtn) return;
   if (status === 'recording') {
     recordBtn.classList.add('recording');
     recordBtn.textContent = '⏹ Detener';
@@ -467,45 +504,56 @@ function formatControlValue(control, value) {
 }
 
 function initDrawer() {
+  if (!drawerToggle || !drawer) return;
   drawerToggle.addEventListener('click', () => {
     drawer.classList.toggle('open');
   });
 }
 
 function initEvents() {
-  zoomSlider.addEventListener('input', handleZoomSlider);
-  viewer.addEventListener('pointerdown', handlePointerDown);
-  viewer.addEventListener('pointermove', handlePointerMove);
-  viewer.addEventListener('pointerup', handlePointerUp);
-  viewer.addEventListener('pointerleave', handlePointerUp);
-  viewer.addEventListener('pointercancel', handlePointerUp);
-  viewer.addEventListener('wheel', handleWheel, { passive: false });
-  snapshotBtn.addEventListener('click', handleSnapshot);
-  recordBtn.addEventListener('click', handleRecordToggle);
+  if (zoomSlider) {
+    zoomSlider.addEventListener('input', handleZoomSlider);
+  }
+  if (viewer) {
+    viewer.addEventListener('pointerdown', handlePointerDown);
+    viewer.addEventListener('pointermove', handlePointerMove);
+    viewer.addEventListener('pointerup', handlePointerUp);
+    viewer.addEventListener('pointerleave', handlePointerUp);
+    viewer.addEventListener('pointercancel', handlePointerUp);
+    viewer.addEventListener('wheel', handleWheel, { passive: false });
+  }
+  if (snapshotBtn) {
+    snapshotBtn.addEventListener('click', handleSnapshot);
+  }
+  if (recordBtn) {
+    recordBtn.addEventListener('click', handleRecordToggle);
+  }
   bindROIMap();
   initDrawer();
 }
 
-stream.addEventListener('load', () => {
-  const updateDimensions = () => {
-    state.imageWidth = stream.naturalWidth;
-    state.imageHeight = stream.naturalHeight;
-    updateTransform();
-    throttleROISend();
-  };
-  if (stream.naturalWidth && stream.naturalHeight) {
-    updateDimensions();
-  } else {
-    const img = new Image();
-    img.onload = () => {
-      state.imageWidth = img.width;
-      state.imageHeight = img.height;
+if (stream) {
+  stream.addEventListener('load', () => {
+    const updateDimensions = () => {
+      state.imageWidth = stream.naturalWidth;
+      state.imageHeight = stream.naturalHeight;
       updateTransform();
       throttleROISend();
     };
-    img.src = stream.src;
-  }
-});
+    if (stream.naturalWidth && stream.naturalHeight) {
+      updateDimensions();
+    } else {
+      const img = new Image();
+      img.onload = () => {
+        state.imageWidth = img.width;
+        state.imageHeight = img.height;
+        updateTransform();
+        throttleROISend();
+      };
+      img.src = stream.src;
+    }
+  });
+}
 
 initEvents();
 connectSocket();
