@@ -35,7 +35,7 @@ npm install
 
 ## Development Notes
 - The backend uses `require()` syntax and runs on `surgicam.local:3000` by default.
-- The frontend automatically targets the current host for the MJPEG feed and WebSocket, so ensure `surgicam.local` (or an equivalent hostname) resolves to the device providing both services.
+- The frontend automatically targets the current host for the MJPEG feed and WebSocket while explicitly dialing port `3000`, ensuring consistent connectivity across Chrome, Firefox, and Safari. Make sure `surgicam.local` (or an equivalent hostname) resolves to the device providing both services.
 - MJPEG snapshots and recordings apply the currently selected ROI to maintain consistent framing.
 - V4L2 control metadata is fetched dynamically, and disabled controls honor the `inactive` flag reported by `v4l2-ctl`.
 

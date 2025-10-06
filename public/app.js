@@ -28,12 +28,24 @@ const drawer = document.getElementById('control-drawer');
 const drawerToggle = document.getElementById('drawer-toggle');
 
 const STREAM_HOST = window.location.hostname || 'surgicam.local';
-const STREAM_URL = `http://${STREAM_HOST}:8080/?action=stream`;
+const PAGE_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http';
+const STREAM_URL = `${PAGE_PROTOCOL}://${STREAM_HOST}:8080/?action=stream`;
 const WS_URL = (() => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const host = window.location.host || 'surgicam.local:3000';
-  return `${protocol}://${host}`;
+  return `${protocol}://${STREAM_HOST}:3000`;
 })();
+
+function withPointerCapture(target, pointerId, action) {
+  if (!target) return;
+  const method = action === 'set' ? 'setPointerCapture' : 'releasePointerCapture';
+  if (typeof target[method] === 'function') {
+    try {
+      target[method](pointerId);
+    } catch (error) {
+      // ignore pointer capture incompatibilities
+    }
+  }
+}
 
 if (stream) {
   stream.src = STREAM_URL;
@@ -257,10 +269,8 @@ function clampOffset() {
 }
 
 function applyZoom(newZoom, originX, originY) {
-  const prevZoom = state.zoom;
   const roiBefore = getCurrentROIPixels();
   state.zoom = Math.min(Math.max(newZoom, 1), 4);
-  const zoomRatio = state.zoom / prevZoom;
   if (state.imageWidth && state.imageHeight) {
     const focusX = originX !== undefined ? originX : roiBefore.x + roiBefore.width / 2;
     const focusY = originY !== undefined ? originY : roiBefore.y + roiBefore.height / 2;
@@ -275,12 +285,16 @@ function applyZoom(newZoom, originX, originY) {
   throttleROISend();
 }
 
+function beginPan(clientX, clientY) {
+  state.isPanning = true;
+  state.panStart = { x: clientX, y: clientY };
+  state.panOffsetStart = { x: state.offsetX, y: state.offsetY };
+}
+
 function handlePointerDown(event) {
   event.preventDefault();
-  state.isPanning = true;
-  state.panStart = { x: event.clientX, y: event.clientY };
-  state.panOffsetStart = { x: state.offsetX, y: state.offsetY };
-  viewer.setPointerCapture(event.pointerId);
+  beginPan(event.clientX, event.clientY);
+  withPointerCapture(viewer, event.pointerId, 'set');
 }
 
 function handlePointerMove(event) {
@@ -297,11 +311,30 @@ function handlePointerMove(event) {
 function handlePointerUp(event) {
   if (!state.isPanning) return;
   state.isPanning = false;
-  try {
-    viewer.releasePointerCapture(event.pointerId);
-  } catch (error) {
-    /* ignore */
-  }
+  withPointerCapture(viewer, event.pointerId, 'release');
+  throttleROISend();
+}
+
+function handleMouseDown(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  beginPan(event.clientX, event.clientY);
+  window.addEventListener('mousemove', handleMouseMove);
+  window.addEventListener('mouseup', handleMouseUp);
+}
+
+function handleMouseMove(event) {
+  if (!state.isPanning) return;
+  const fakeEvent = { clientX: event.clientX, clientY: event.clientY };
+  handlePointerMove(fakeEvent);
+}
+
+function handleMouseUp(event) {
+  if (event.button !== 0 && event.type === 'mouseup') return;
+  state.isPanning = false;
+  window.removeEventListener('mousemove', handleMouseMove);
+  window.removeEventListener('mouseup', handleMouseUp);
+  throttleROISend();
 }
 
 function handleWheel(event) {
@@ -342,41 +375,43 @@ function bindROIMap() {
   };
   const move = (event) => {
     if (!active) return;
+    if (typeof event.preventDefault === 'function') {
+      event.preventDefault();
+    }
     handleROIMapInteraction(event);
   };
   const stop = () => {
     active = false;
+    throttleROISend();
   };
   roiMap.addEventListener('pointerdown', (event) => {
     event.preventDefault();
-    if (typeof roiMap.setPointerCapture === 'function') {
-      try {
-        roiMap.setPointerCapture(event.pointerId);
-      } catch (error) {
-        // ignore pointer capture failures
-      }
-    }
+    withPointerCapture(roiMap, event.pointerId, 'set');
     start(event);
   });
   roiMap.addEventListener('pointermove', move);
   roiMap.addEventListener('pointerup', (event) => {
-    if (typeof roiMap.releasePointerCapture === 'function') {
-      try {
-        if (typeof roiMap.hasPointerCapture === 'function') {
-          if (roiMap.hasPointerCapture(event.pointerId)) {
-            roiMap.releasePointerCapture(event.pointerId);
-          }
-        } else {
-          roiMap.releasePointerCapture(event.pointerId);
-        }
-      } catch (error) {
-        // ignore pointer capture failures
-      }
-    }
+    withPointerCapture(roiMap, event.pointerId, 'release');
     stop();
   });
   roiMap.addEventListener('pointercancel', stop);
   roiMap.addEventListener('pointerleave', stop);
+
+  roiMap.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    start({ clientX: event.clientX, clientY: event.clientY });
+    const onMove = (moveEvent) => {
+      move({ clientX: moveEvent.clientX, clientY: moveEvent.clientY });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      stop();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
 }
 
 function handleSnapshot() {
@@ -570,11 +605,15 @@ function initEvents() {
     zoomSlider.addEventListener('input', handleZoomSlider);
   }
   if (viewer) {
-    viewer.addEventListener('pointerdown', handlePointerDown);
-    viewer.addEventListener('pointermove', handlePointerMove);
-    viewer.addEventListener('pointerup', handlePointerUp);
-    viewer.addEventListener('pointerleave', handlePointerUp);
-    viewer.addEventListener('pointercancel', handlePointerUp);
+    if (window.PointerEvent) {
+      viewer.addEventListener('pointerdown', handlePointerDown);
+      viewer.addEventListener('pointermove', handlePointerMove);
+      viewer.addEventListener('pointerup', handlePointerUp);
+      viewer.addEventListener('pointerleave', handlePointerUp);
+      viewer.addEventListener('pointercancel', handlePointerUp);
+    } else {
+      viewer.addEventListener('mousedown', handleMouseDown);
+    }
     viewer.addEventListener('wheel', handleWheel, { passive: false });
   }
   if (snapshotBtn) {
@@ -587,27 +626,41 @@ function initEvents() {
   initDrawer();
 }
 
+function applyStreamDimensions(width, height) {
+  if (!width || !height) return;
+  const roundedWidth = Math.round(width);
+  const roundedHeight = Math.round(height);
+  if (roundedWidth !== state.imageWidth || roundedHeight !== state.imageHeight) {
+    state.imageWidth = roundedWidth;
+    state.imageHeight = roundedHeight;
+    updateTransform();
+    throttleROISend();
+  }
+}
+
+function pollStreamDimensions(attempt = 0) {
+  if (!stream) return;
+  if (stream.naturalWidth && stream.naturalHeight) {
+    applyStreamDimensions(stream.naturalWidth, stream.naturalHeight);
+    return;
+  }
+  if (attempt > 50) return;
+  setTimeout(() => pollStreamDimensions(attempt + 1), 200);
+}
+
 if (stream) {
   stream.addEventListener('load', () => {
-    const updateDimensions = () => {
-      state.imageWidth = stream.naturalWidth;
-      state.imageHeight = stream.naturalHeight;
-      updateTransform();
-      throttleROISend();
-    };
     if (stream.naturalWidth && stream.naturalHeight) {
-      updateDimensions();
+      applyStreamDimensions(stream.naturalWidth, stream.naturalHeight);
     } else {
       const img = new Image();
       img.onload = () => {
-        state.imageWidth = img.width;
-        state.imageHeight = img.height;
-        updateTransform();
-        throttleROISend();
+        applyStreamDimensions(img.width, img.height);
       };
       img.src = stream.src;
     }
   });
+  pollStreamDimensions();
 }
 
 initEvents();
