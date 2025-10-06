@@ -291,7 +291,19 @@ function beginPan(clientX, clientY) {
   state.panOffsetStart = { x: state.offsetX, y: state.offsetY };
 }
 
+function isInteractiveTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      '#dock, #roi-map, #drawer-toggle, #control-drawer, button, input, select, textarea, label, .control-card, .range-control, .toggle, .menu-control, .zoom-control'
+    )
+  );
+}
+
 function handlePointerDown(event) {
+  if (isInteractiveTarget(event.target)) {
+    return;
+  }
   event.preventDefault();
   beginPan(event.clientX, event.clientY);
   withPointerCapture(viewer, event.pointerId, 'set');
@@ -317,6 +329,9 @@ function handlePointerUp(event) {
 
 function handleMouseDown(event) {
   if (event.button !== 0) return;
+  if (isInteractiveTarget(event.target)) {
+    return;
+  }
   event.preventDefault();
   beginPan(event.clientX, event.clientY);
   window.addEventListener('mousemove', handleMouseMove);
@@ -338,6 +353,9 @@ function handleMouseUp(event) {
 }
 
 function handleWheel(event) {
+  if (isInteractiveTarget(event.target)) {
+    return;
+  }
   event.preventDefault();
   const delta = -event.deltaY / 300;
   const newZoom = state.zoom * (1 + delta);
